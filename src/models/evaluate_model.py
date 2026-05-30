@@ -1,6 +1,7 @@
 """Evaluate fine-tuned FinBERT model on test set."""
 
 import json
+import sys
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -9,6 +10,9 @@ from sklearn.metrics import (
     confusion_matrix, classification_report
 )
 from loguru import logger
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent))
 
 from finbert_classifier import FinBERTClassifier, CATEGORIES
 
@@ -133,7 +137,10 @@ def evaluate_model(model_path: str, test_csv: str):
 
 
 if __name__ == "__main__":
-    model_path = "./data/models/finbert-transaction"
-    test_csv = "data/raw/transaction_labels.csv"  # Will filter to test set
+    # Get project root
+    project_root = Path(__file__).parent.parent.parent
 
-    evaluate_model(model_path, test_csv)
+    model_path = project_root / "data" / "models" / "finbert-transaction"
+    test_csv = project_root / "data" / "raw" / "transaction_labels.csv"
+
+    evaluate_model(str(model_path), str(test_csv))
