@@ -115,24 +115,40 @@ def synthesis_node(state: AgentState) -> dict:
 
     llm = ChatGroq(model="llama-3.1-8b-instant", temperature=0.5)
 
-    # Prepare context
+    txn_count = len(state.get("transactions", []))
+    insufficient_data = txn_count < 10
+
+    # Prepare context with data sufficiency warning
     context = f"""
-Transactions analyzed: {len(state['transactions'])}
+Transactions analyzed: {txn_count}
 Categories: {[r.get('category') for r in state['enriched_results']]}
 Anomalies found: {sum(1 for r in state['anomaly_results'] if r.get('is_anomaly'))}
 Health score: {state['insights'].get('health_score', 0.0):.2f}
 Key insights: {state['insights'].get('insights', [])}
+
+{'⚠️ DATA SUFFICIENCY WARNING: Only ' + str(txn_count) + ' transaction(s). Insufficient for pattern analysis.' if insufficient_data else ''}
 """
 
+    # STRICT system prompt with constraints
     system_prompt = """You are a financial analyst explaining transaction analysis results.
-Provide a concise 3-4 sentence summary of the key findings. Be specific and grounded in the data."""
+
+CONSTRAINTS (MUST FOLLOW):
+1. Only state facts directly from tool outputs
+2. Do NOT claim patterns, diversity, or habits - these need 10+ transactions
+3. Do NOT compare spending levels or categories
+4. Do NOT mention "diversity", "concentration", or "distribution" if <10 transactions
+5. If insufficient data, say so explicitly
+6. Every number must come from tool outputs
+7. Be specific, factual, and grounded - never infer or extrapolate
+
+Output: 2-3 sentences maximum, directly from the data."""
 
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"""Based on this analysis:
 {context}
 
-Provide a brief narrative summary."""),
+Provide a brief factual summary. If data is insufficient, state that clearly."""),
     ]
 
     response = llm.invoke(messages)

@@ -7,13 +7,15 @@ from loguru import logger
 class HallucinationGuard:
     """Validates LLM output against tool results for grounding."""
 
-    def __init__(self, grounding_threshold: float = 0.85):
+    def __init__(self, grounding_threshold: float = 0.85, min_transaction_count: int = 10):
         """Initialize guard with grounding threshold.
 
         Args:
             grounding_threshold: Min grounding score (0.0-1.0) to accept response
+            min_transaction_count: Min transactions for pattern claims (default 10)
         """
         self.threshold = grounding_threshold
+        self.min_txn_count = min_transaction_count
 
     def compute_grounding_score(
         self,
@@ -25,17 +27,56 @@ class HallucinationGuard:
     ) -> float:
         """Compute grounding score between LLM response and tool outputs.
 
-        Checks:
+        Checks (STRICT):
         1. Category mentions match enriched results
         2. Anomaly claims backed by scores
-        3. Financial health score consistency
-        4. No invented metrics
+        3. Health score matches exactly (±5%)
+        4. No invented metrics or comparative claims on insufficient data
+        5. No claims about "diversity", "patterns", "habits" with <10 txns
+        6. All numbers traceable to tool outputs
 
         Returns:
             Grounding score 0.0-1.0
         """
         checks_passed = 0
         checks_total = 0
+
+        # Get transaction count from insights
+        txn_count = 1  # Default: assume 1 transaction (insufficient)
+        if insights:
+            metrics = insights.get("metrics", {})
+            txn_count = metrics.get("num_transactions", 1)
+
+        logger.debug(f"Checking response for {txn_count} transactions")
+
+        # Check 0: DATA SUFFICIENCY CHECK (most important)
+        checks_total += 1
+        insufficient_data_claims = [
+            r"(?:low|high|limited|concentrated)\s+(?:diversity|variety|spending)",
+            r"(?:spending|transaction|spending)\s+(?:patterns|habits|behavior)",
+            r"(?:lack|absence)\s+of\s+(?:diversity|variety)",
+            r"concentration\s+of\s+(?:spending|transactions)",
+            r"(?:spending|transaction)\s+distribution",
+        ]
+
+        has_insufficient_claims = any(
+            re.search(pat, response, re.IGNORECASE)
+            for pat in insufficient_data_claims
+        )
+
+        if txn_count < self.min_txn_count:
+            if has_insufficient_claims:
+                logger.warning(
+                    f"Pattern/diversity claims made with only {txn_count} transactions (min {self.min_txn_count})"
+                )
+                # Fail this check - don't pass it
+                logger.debug("Data sufficiency check: FAILED - comparative claims on insufficient data")
+            else:
+                checks_passed += 1
+                logger.debug(f"Data sufficiency check: OK - no pattern claims with {txn_count} txns")
+        else:
+            checks_passed += 1
+            logger.debug(f"Data sufficiency check: OK - {txn_count} transactions is sufficient")
 
         # Check 1: Category mentions
         if enriched_results:
@@ -62,45 +103,91 @@ class HallucinationGuard:
                 checks_passed += 1
                 logger.debug("Anomaly check: no anomalies, response consistent")
 
-        # Check 3: Financial health score
+        # Check 3: Financial health score (STRICT: ±5% only)
         if insights:
             checks_total += 1
-            health_score = insights.get("overall_health_score", 0.0)
-            # Extract any mentioned score
-            score_match = re.search(r"(?:score|rating|health)[\s:]*(\d+\.?\d*)", response.lower())
+            health_score = insights.get("health_score", 0.0)
+            score_match = re.search(r"(?:score|health)[\s:]*(\d+\.?\d*)", response.lower())
+
             if score_match:
                 mentioned_score = float(score_match.group(1))
-                # Allow ±0.15 variance
-                if abs(mentioned_score - (health_score * 100)) < 15:
+                # STRICT: Must match within ±5% (not ±15%)
+                expected_score = health_score * 100 if health_score < 2 else health_score
+                if abs(mentioned_score - expected_score) <= 5:
                     checks_passed += 1
-                logger.debug(f"Health score check: {mentioned_score:.0f} vs {health_score*100:.0f}")
-            else:
-                # If no score mentioned, check qualitative consistency
-                if health_score > 0.7:
-                    if "good" in response.lower() or "healthy" in response.lower():
-                        checks_passed += 1
-                elif health_score < 0.4:
-                    if "poor" in response.lower() or "concerning" in response.lower():
-                        checks_passed += 1
+                    logger.debug(f"Health score check: {mentioned_score:.1f} vs {expected_score:.1f} ✓")
                 else:
-                    if "moderate" in response.lower() or "fair" in response.lower():
-                        checks_passed += 1
+                    logger.debug(f"Health score check: {mentioned_score:.1f} vs {expected_score:.1f} ✗ (out of range)")
+            else:
+                # No score mentioned but claims about health
+                if any(word in response.lower() for word in ["health", "score", "wellness"]):
+                    logger.debug("Health score mentioned but number not found - FAIL")
+                else:
+                    checks_passed += 1
+                    logger.debug("Health score check: no health claims made")
 
         # Check 4: No invented metrics
         checks_total += 1
         invented_patterns = [
-            r"\d+\.\d+%\s+(?:increase|decrease)",  # Invented % changes
-            r"(?:exactly|precisely)\s+\$\d+,\d+",  # Over-specific amounts
+            (r"\d+\.\d+%\s+(?:increase|decrease|growth|change)", "invented % change"),
+            (r"(?:exactly|precisely)\s+\$\d+\.\d+", "over-specific amount"),
+            (r"(?:approximately|around)\s+\d+%", "invented percentage"),
+            (r"\d+(?:\.\d+)?\s+(?:categories|items|transactions)\s+analyzed", "invented count"),
         ]
-        if not any(re.search(pat, response) for pat in invented_patterns):
+
+        has_invented = False
+        for pattern, description in invented_patterns:
+            if re.search(pattern, response):
+                logger.debug(f"Invented metrics check: found {description}")
+                has_invented = True
+
+        if not has_invented:
             checks_passed += 1
             logger.debug("Invented metrics check: passed")
+
+        # Check 5: Extract and verify all numeric claims
+        checks_total += 1
+        numeric_claims = re.findall(r"(\d+\.?\d*)\s*(?:%|transactions?|dollars?|\$)", response)
+        tool_numbers = set()
+
+        # Collect all numbers from tools
+        if enriched_results:
+            for r in enriched_results:
+                conf = r.get("confidence", 0)
+                if isinstance(conf, float):
+                    tool_numbers.add(f"{conf*100:.1f}")
+
+        if insights:
+            health = insights.get("health_score", 0)
+            if isinstance(health, float):
+                tool_numbers.add(f"{health*100:.1f}")
+                tool_numbers.add(f"{health:.2f}")
+
+        if insights:
+            metrics = insights.get("metrics", {})
+            if metrics.get("anomaly_rate"):
+                tool_numbers.add(str(metrics.get("anomaly_rate")))
+
+        if numeric_claims:
+            matched = sum(
+                1 for claim in numeric_claims
+                if any(
+                    abs(float(claim) - float(tool_num)) < 2  # Within 2 points
+                    for tool_num in tool_numbers
+                    if tool_num.replace("%", "").replace("$", "").replace(".", "").isdigit()
+                )
+            )
+            if matched > 0:
+                checks_passed += 1
+                logger.debug(f"Numeric verification: {matched}/{len(numeric_claims)} numbers traced")
+            else:
+                logger.debug(f"Numeric verification: {len(numeric_claims)} claims but none matched tools")
         else:
-            logger.debug("Invented metrics check: failed - suspicious patterns found")
+            checks_passed += 1
 
         # Compute grounding score
         score = checks_passed / checks_total if checks_total > 0 else 0.0
-        logger.info(f"Grounding score: {score:.2f} ({checks_passed}/{checks_total} checks)")
+        logger.info(f"Grounding score: {score:.2f} ({checks_passed}/{checks_total} checks passed)")
         return score
 
     def validate(
@@ -124,6 +211,6 @@ class HallucinationGuard:
             return True, score, f"Response grounded (score: {score:.2f})"
         else:
             return False, score, (
-                f"Response not sufficiently grounded (score: {score:.2f}, "
-                f"threshold: {self.threshold}). May contain hallucinations."
+                f"Response not sufficiently grounded (score: {score:.2f} < {self.threshold}). "
+                f"May contain unverified claims or insufficient data for assertions."
             )
