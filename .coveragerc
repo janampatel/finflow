@@ -1,0 +1,32 @@
+[run]
+branch = True
+source = src/tools,src/models,src/api
+omit =
+    */venv/*
+    */site-packages/*
+    */tests/*
+    */__pycache__/*
+    src/agents/*
+    src/preprocessing/*
+    src/dashboard/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstractmethod
+    @abc.abstractmethod
+    except ImportError:
+    except Exception:
+    if not.*:
+
+precision = 2
+show_missing = True
+
+[html]
+directory = coverage_report
+title = FinFlow Code Coverage Report
