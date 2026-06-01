@@ -43,14 +43,24 @@ class FinBERTClassifier:
             self.tokenizer = AutoTokenizer.from_pretrained(str(self.model_path))
             self.model = AutoModelForSequenceClassification.from_pretrained(str(self.model_path))
         else:
-            logger.info("Loading base FinBERT model")
+            # Graceful degradation: the fine-tuned weights aren't present (e.g. a
+            # code-only image without the model artifact). Fall back to the base
+            # FinBERT body with a freshly-initialized 12-class head.
+            # ignore_mismatched_sizes lets the base 3-label checkpoint load into
+            # our 12-label architecture instead of raising a size-mismatch error.
+            logger.warning(
+                f"Fine-tuned model not found at {self.model_path}; falling back to "
+                "base FinBERT with an untrained head (predictions are not reliable "
+                "until the fine-tuned model is provided)."
+            )
             model_id = "ProsusAI/finbert"
             self.tokenizer = AutoTokenizer.from_pretrained(model_id)
             self.model = AutoModelForSequenceClassification.from_pretrained(
                 model_id,
                 num_labels=len(CATEGORIES),
                 id2label=self.id2label,
-                label2id=self.label2id
+                label2id=self.label2id,
+                ignore_mismatched_sizes=True,
             )
 
         self.model.to(self.device)

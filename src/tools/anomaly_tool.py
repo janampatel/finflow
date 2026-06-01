@@ -145,8 +145,16 @@ class AnomalyTool:
         }
 
 
-# Singleton instance
-_anomaly_tool_instance = AnomalyTool()
+# Lazy singleton — IsolationForest trains/loads on first call, not at import, so
+# the API package imports without the dataset present (testable; fast cold start).
+_anomaly_tool_instance: "AnomalyTool | None" = None
+
+
+def _get_anomaly_tool() -> "AnomalyTool":
+    global _anomaly_tool_instance
+    if _anomaly_tool_instance is None:
+        _anomaly_tool_instance = AnomalyTool()
+    return _anomaly_tool_instance
 
 
 def anomaly_detection_tool(amount: float, balance_change_orig: float = 0.0, **kwargs) -> dict:
@@ -161,4 +169,4 @@ def anomaly_detection_tool(amount: float, balance_change_orig: float = 0.0, **kw
     Returns:
         dict with keys: is_anomaly, anomaly_score, severity, anomaly_reason, method, tool
     """
-    return _anomaly_tool_instance(amount, balance_change_orig, **kwargs)
+    return _get_anomaly_tool()(amount, balance_change_orig, **kwargs)

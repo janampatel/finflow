@@ -50,8 +50,17 @@ class EnrichmentTool:
         self._predict_cached.cache_clear()
 
 
-# Singleton instance
-_enrichment_tool_instance = EnrichmentTool()
+# Lazy singleton — the FinBERT model loads on first call, not at import. This
+# keeps `import src.api.main` cheap and side-effect-free (testable, fast cold
+# start on Cloud Run); the model warms once on the first enrichment request.
+_enrichment_tool_instance: "EnrichmentTool | None" = None
+
+
+def _get_enrichment_tool() -> "EnrichmentTool":
+    global _enrichment_tool_instance
+    if _enrichment_tool_instance is None:
+        _enrichment_tool_instance = EnrichmentTool()
+    return _enrichment_tool_instance
 
 
 def enrichment_tool(transaction_description: str) -> dict:
@@ -77,12 +86,12 @@ def enrichment_tool(transaction_description: str) -> dict:
         >>> print(result['confidence'])
         0.95
     """
-    return _enrichment_tool_instance(transaction_description)
+    return _get_enrichment_tool()(transaction_description)
 
 
 def get_enrichment_cache_stats():
     """Get LRU cache hit/miss statistics."""
-    info = _enrichment_tool_instance.cache_info()
+    info = _get_enrichment_tool().cache_info()
     return {
         "hits": info.hits,
         "misses": info.misses,

@@ -190,8 +190,16 @@ class FraudClassifier:
         }
 
 
-# Singleton
-_fraud_instance = FraudClassifier()
+# Lazy singleton — the classifier loads/trains on first call, not at import, so
+# the API package imports without the dataset present (testable; fast cold start).
+_fraud_instance: "FraudClassifier | None" = None
+
+
+def _get_fraud_instance() -> "FraudClassifier":
+    global _fraud_instance
+    if _fraud_instance is None:
+        _fraud_instance = FraudClassifier()
+    return _fraud_instance
 
 
 def fraud_detection_tool(
@@ -212,4 +220,4 @@ def fraud_detection_tool(
     Returns:
         dict: fraud_probability, is_fraud_predicted, risk_level, method, tool
     """
-    return _fraud_instance(amount, balance_change_orig, balance_change_dest, tx_type, **kwargs)
+    return _get_fraud_instance()(amount, balance_change_orig, balance_change_dest, tx_type, **kwargs)
