@@ -88,22 +88,35 @@ class CashFlowTool:
                 "total_expenses": 0.0,
                 "net_cash_flow": 0.0,
                 "transaction_count": 0,
-                "avg_transaction": 0.0
+                "avg_transaction": 0.0,
+                "std_transaction": 0.0,
+                "income_to_expense_ratio": None,
             }
 
-        amounts = [tx.get("amount", 0) for tx in transactions]
-        income = sum(a for a in amounts if a > 0)
-        expenses = abs(sum(a for a in amounts if a < 0))
+        # Income/expense direction comes from the SIGNED balance change, not the
+        # (always-positive) transaction amount. Fall back to amount sign only if
+        # balance_change is absent.
+        def _signed(tx):
+            bc = tx.get("balance_change")
+            return float(bc) if bc is not None else float(tx.get("amount", 0) or 0)
+
+        magnitudes = [abs(float(tx.get("amount", 0) or 0)) for tx in transactions]
+        signed = [_signed(tx) for tx in transactions]
+        income = sum(a for a in signed if a > 0)
+        expenses = abs(sum(a for a in signed if a < 0))
         net = income - expenses
+
+        # Never emit a non-finite ratio (inf/NaN break JSON and downstream math).
+        ratio = round(income / expenses, 4) if expenses > 0 else None
 
         return {
             "total_income": float(income),
             "total_expenses": float(expenses),
             "net_cash_flow": float(net),
             "transaction_count": len(transactions),
-            "avg_transaction": float(np.mean(amounts)) if amounts else 0.0,
-            "std_transaction": float(np.std(amounts)) if amounts else 0.0,
-            "income_to_expense_ratio": float(income / expenses) if expenses > 0 else float("inf")
+            "avg_transaction": float(np.mean(magnitudes)) if magnitudes else 0.0,
+            "std_transaction": float(np.std(magnitudes)) if magnitudes else 0.0,
+            "income_to_expense_ratio": ratio,
         }
 
     def __call__(self, transactions: List[Dict]) -> dict:

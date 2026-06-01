@@ -27,10 +27,7 @@ uvicorn==0.27.1
 pydantic==2.6.3
 httpx==0.27.0
 
-# Dashboard
-streamlit==1.32.2
-plotly==5.19.0
-altair==5.2.0
+# Dashboard: migrated to Next.js (see frontend/). No Python UI deps required.
 
 # Data Quality
 great-expectations==1.17.2

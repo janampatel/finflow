@@ -9,8 +9,10 @@ class Transaction(BaseModel):
 
     description: str = Field(..., description="Transaction description")
     amount: float = Field(..., description="Transaction amount")
-    balance_change: float = Field(..., description="Balance change")
+    balance_change: float = Field(..., description="Balance change (origin)")
     merchant: str = Field(..., description="Merchant name")
+    transaction_type: Optional[str] = Field("", description="Type: TRANSFER/CASH_OUT/PAYMENT/... (improves fraud features)")
+    balance_change_dest: Optional[float] = Field(0.0, description="Balance change at destination (for fraud features)")
 
 
 class AnalyzeRequest(BaseModel):
@@ -30,12 +32,15 @@ class ToolResult(BaseModel):
 class AnalyzeResponse(BaseModel):
     """Response from agent analysis."""
 
-    final_response: str = Field(..., description="Agent's narrative response")
-    grounding_score: float = Field(..., ge=0.0, le=1.0, description="Hallucination guard score")
+    final_response: str = Field(..., description="Agent's narrative response (served)")
+    grounding_score: float = Field(..., ge=0.0, le=1.0, description="Grounding of the served response")
+    llm_grounding_score: float = Field(1.0, ge=0.0, le=1.0, description="Grounding of the raw LLM narrative before any fallback")
+    used_fallback: bool = Field(False, description="True if the LLM narrative failed grounding and a deterministic summary was served")
     execution_trace: List[str] = Field(..., description="Execution nodes in order")
 
     enriched_results: List[Dict[str, Any]] = []
     anomaly_results: List[Dict[str, Any]] = []
+    fraud_results: List[Dict[str, Any]] = []
     merchant_results: List[Dict[str, Any]] = []
     cashflow_results: Dict[str, Any] = {}
     insights: Dict[str, Any] = {}

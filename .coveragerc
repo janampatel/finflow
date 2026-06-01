@@ -8,7 +8,6 @@ omit =
     */__pycache__/*
     src/agents/*
     src/preprocessing/*
-    src/dashboard/*
 
 [report]
 exclude_lines =

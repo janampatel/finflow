@@ -31,23 +31,24 @@ class AnomalyTool:
             df = pd.read_parquet(str(processed_path))
             logger.info(f"Loaded {len(df):,} processed transactions")
 
-            # Detect available features
-            available_cols = set(df.columns)
-            logger.info(f"Available columns: {sorted(available_cols)}")
+            # Engineer the PaySim fraud signal: "error-balance" features capture
+            # the balance inconsistency that defines fraud (money leaves origin but
+            # the destination balance doesn't reflect it). These separate fraud far
+            # better than raw amount, and are computable from existing columns:
+            #   error_balance_orig = (newbalanceOrig - oldbalanceOrg) + amount
+            #   error_balance_dest = amount - (newbalanceDest - oldbalanceDest)
+            df["balance_change_dest"] = df["newbalanceDest"] - df["oldbalanceDest"]
+            df["error_balance_orig"] = df["balance_change_orig"] + df["amount"]
+            df["error_balance_dest"] = df["amount"] - df["balance_change_dest"]
 
-            # Select features for anomaly detection (only those that exist)
-            potential_features = [
-                "amount", "is_round_amount", "amount_log",
-                "balance_change_orig", "balance_change_dest"
+            self.trained_features = [
+                "amount",
+                "balance_change_orig",
+                "error_balance_orig",
+                "error_balance_dest",
             ]
-            self.trained_features = [f for f in potential_features if f in available_cols]
 
-            if len(self.trained_features) < 2:
-                logger.warning(f"Only {len(self.trained_features)} features available, using heuristic mode")
-                self.model = None
-                return
-
-            X = df[self.trained_features].fillna(df[self.trained_features].median()).values
+            X = df[self.trained_features].fillna(0.0).values
 
             # Train Isolation Forest
             logger.info(f"Training IsolationForest: {len(X)} samples × {len(self.trained_features)} features")
@@ -93,23 +94,18 @@ class AnomalyTool:
             result = self._heuristic_detection(amount, balance_change_orig)
         else:
             try:
-                # Build feature vector in trained order
-                feature_values = []
-                for fname in self.trained_features:
-                    if fname == "amount":
-                        feature_values.append(float(amount))
-                    elif fname == "is_round_amount":
-                        is_round = 1.0 if (amount > 0 and amount == int(amount) and str(int(amount)).endswith("00")) else 0.0
-                        feature_values.append(is_round)
-                    elif fname == "amount_log":
-                        feature_values.append(float(np.log1p(abs(amount))))
-                    elif fname == "balance_change_orig":
-                        feature_values.append(float(balance_change_orig))
-                    elif fname == "balance_change_dest":
-                        feature_values.append(float(kwargs.get("balance_change_dest", 0)))
-                    else:
-                        feature_values.append(float(kwargs.get(fname, 0)))
+                # Build the SAME engineered feature vector used in training.
+                balance_change_dest = float(kwargs.get("balance_change_dest", 0.0))
+                error_balance_orig = float(balance_change_orig) + float(amount)
+                error_balance_dest = float(amount) - balance_change_dest
 
+                feature_map = {
+                    "amount": float(amount),
+                    "balance_change_orig": float(balance_change_orig),
+                    "error_balance_orig": error_balance_orig,
+                    "error_balance_dest": error_balance_dest,
+                }
+                feature_values = [feature_map[f] for f in self.trained_features]
                 features = np.array(feature_values, dtype=np.float64).reshape(1, -1)
 
                 # Predict

@@ -61,14 +61,18 @@ def create_agent_executor(transactions: list[dict]):
     initial_state = {
         "messages": [],
         "transactions": transactions,
+        "selected_tools": [],
         "enriched_results": [],
         "anomaly_results": [],
+        "fraud_results": [],
         "cashflow_results": {},
         "merchant_results": [],
         "insights": {},
         "agent_plan": "",
         "final_response": "",
         "grounding_score": 0.0,
+        "llm_grounding_score": 0.0,
+        "used_fallback": False,
         "execution_trace": []
     }
 
