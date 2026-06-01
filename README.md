@@ -160,6 +160,27 @@ guard validate (or replace) the narrative.
 
 ---
 
+## Deployment (Docker · GitHub Actions · Google Cloud Run)
+
+The serving layer is **stateless**, so it containerizes cleanly and scales
+horizontally with zero code changes.
+
+- **Docker** — multi-stage `Dockerfile` builds a lean, non-root serving image
+  with **CPU-only torch** (skips ~2 GB of unused CUDA) and no build toolchain in
+  the final layer. `docker compose up` runs the API + Next.js frontend locally.
+- **CI** (`.github/workflows/ci.yml`) — on every push/PR: ruff lint → byte-compile
+  + import smoke (boots without the dataset) → **`docker build` + `/health`
+  container smoke test** (with GitHub-Actions layer caching).
+- **Cloud Run** (`.github/workflows/deploy-cloudrun.yml`) — one-command,
+  on-demand deploy: `gcloud run deploy finflow-api --source .` builds the
+  Dockerfile via Cloud Build and rolls out a scale-to-zero revision behind HTTPS.
+
+State is **externalized** (Parquet/DuckDB, model artifacts) rather than baked
+into the image — the property that lets the service scale to N replicas. Full
+setup + deploy guide: **[`deploy/README.md`](deploy/README.md)**.
+
+---
+
 ## Repository layout
 
 ```
@@ -173,6 +194,11 @@ src/
 frontend/            # Next.js dashboard
 scripts/             # run_evaluation.py, find_users.py, generate_sample_data.py
 metrics/reports/     # finbert_evaluation.json, fraud_evaluation.json, final_report.json
+.github/workflows/   # ci.yml (lint+smoke+docker), deploy-cloudrun.yml
+deploy/              # Cloud Run deploy + gcloud setup guide
+Dockerfile           # multi-stage, CPU-torch, non-root serving image
+docker-compose.yml   # local API + frontend stack
+requirements-api.txt # runtime-only deps (lean serving image)
 PLAN.md              # full phase-by-phase design + status
 ```
 

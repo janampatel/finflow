@@ -1,0 +1,33 @@
+# Local dev orchestration: containerized API + Next.js frontend.
+# The API image is the same one that ships to Cloud Run; here we mount the
+# local data/ and src/ for live iteration.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: finflow-api:local
+    ports:
+      - "8000:8080"          # host 8000 -> container $PORT (8080)
+    environment:
+      - PORT=8080
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - FRONTEND_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+    volumes:
+      - ./data:/app/data:ro  # mount the (gitignored) Parquet + models read-only
+      - ./src:/app/src        # live-reload source during local dev
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev"
+    depends_on:
+      - api

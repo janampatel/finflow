@@ -1,0 +1,36 @@
+# Keep the build context tiny and the image lean.
+
+# Heavy data + model artifacts — never baked into the image (see deploy/README.md)
+data/
+metrics/
+notebooks/
+
+# Frontend (deployed separately)
+frontend/
+
+# Dev / CI-only
+tests/
+scripts/
+.github/
+.git/
+*.md
+PLAN.md
+
+# Python cruft
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+venv/
+env/
+.venv/
+
+# Local env / secrets — must NOT enter the image
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db

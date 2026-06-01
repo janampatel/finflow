@@ -1,0 +1,62 @@
+name: Deploy to Cloud Run
+
+# Manual, on-demand deploy (Option B): triggered from the Actions tab, not on
+# every push — so the showcase stays free of accidental deploys / billing.
+# Cloud Build compiles the Dockerfile server-side (no Docker needed in the runner).
+#
+# Required repo secrets (Settings -> Secrets and variables -> Actions):
+#   GCP_PROJECT_ID   your GCP project id
+#   GCP_SA_KEY       JSON key of a service account with roles:
+#                      run.admin, cloudbuild.builds.editor,
+#                      artifactregistry.writer, iam.serviceAccountUser
+#   GROQ_API_KEY     Groq LLM key (injected as a Cloud Run env var)
+#
+# For production, prefer Workload Identity Federation over a JSON key
+# (google-github-actions/auth supports it) — see deploy/README.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Cloud Run region"
+        default: "us-central1"
+        required: true
+
+env:
+  SERVICE: finflow-api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Deploy (Cloud Build builds the Dockerfile from source)
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --source . \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --platform managed \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 300 \
+            --max-instances 3 \
+            --set-env-vars "GROQ_API_KEY=${{ secrets.GROQ_API_KEY }},FRONTEND_ORIGINS=*"
+
+      - name: Show service URL
+        run: |
+          gcloud run services describe "$SERVICE" \
+            --project "${{ secrets.GCP_PROJECT_ID }}" \
+            --region "${{ github.event.inputs.region }}" \
+            --format='value(status.url)'
