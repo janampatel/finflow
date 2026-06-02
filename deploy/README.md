@@ -87,3 +87,51 @@ large to bake into a lean image, and `data/` is gitignored. The image ships
 
 **Stateless compute, externalized state** is exactly what lets the service scale
 horizontally.
+
+---
+
+## Full public demo (personal Gmail project + Vercel)
+
+A Workspace-managed account (e.g. `*.edu`) forces every project under its org,
+which usually blocks public `allUsers` access via Domain-Restricted-Sharing. To
+get a clickable, data-backed public demo, deploy under a **personal Gmail** GCP
+project (no org → public allowed) and host the Next.js frontend on **Vercel**.
+
+### A. Build the data-baked demo image context
+
+```powershell
+python scripts/prepare_demo.py          # assembles deploy/demo_build/ (sample data + models)
+```
+
+### B. Deploy the API to a personal-Gmail Cloud Run project (public)
+
+```powershell
+# authenticate as your personal Gmail, create + select a project with billing on
+gcloud auth login                        # pick the gmail account
+gcloud projects create finflow-demo-XXXX
+gcloud config set project finflow-demo-XXXX
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+
+cd deploy/demo_build
+gcloud run deploy finflow-demo --source . --region us-central1 `
+  --allow-unauthenticated --memory 2Gi --cpu 2 --timeout 600 --max-instances 2 `
+  --set-env-vars "GROQ_API_KEY=$env:GROQ_API_KEY,FRONTEND_ORIGINS=*"
+```
+
+Public access works here (no org policy). Note the printed service URL.
+
+### C. Deploy the frontend to Vercel
+
+1. Push the repo to GitHub (already done).
+2. On **vercel.com → New Project → import the repo**.
+3. Set **Root Directory = `frontend`** (Vercel auto-detects Next.js).
+4. Add env var **`NEXT_PUBLIC_API_URL`** = the Cloud Run URL from step B.
+5. **Deploy** → Vercel gives a public `https://<app>.vercel.app` URL.
+
+### D. Lock CORS to the Vercel domain (optional hardening)
+
+Re-run the step-B deploy with
+`--set-env-vars "GROQ_API_KEY=...,FRONTEND_ORIGINS=https://<app>.vercel.app"`.
+
+Result: a public, interactive dashboard (Vercel) talking to a public, data-backed
+API (Cloud Run) — fully functional, free-tier.

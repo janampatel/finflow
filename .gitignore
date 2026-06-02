@@ -8,6 +8,10 @@ env/
 # Data — top-level dataset dir ONLY.
 /data/
 
+# Assembled demo build context (holds a 418 MB copy of the models) — generated
+# by scripts/prepare_demo.py, never committed.
+/deploy/demo_build/
+
 # Logs & Metrics
 metrics/reports/
 *.log

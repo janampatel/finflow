@@ -179,6 +179,16 @@ State is **externalized** (Parquet/DuckDB, model artifacts) rather than baked
 into the image — the property that lets the service scale to N replicas. Full
 setup + deploy guide: **[`deploy/README.md`](deploy/README.md)**.
 
+**Live status:** deployed to Cloud Run through the GitHub Actions pipeline and
+running as an **IAM-protected** service (unauthenticated `allUsers` access is
+intentionally disabled by organization policy — as it should be for a financial
+service). Reach it with an identity token:
+
+```bash
+curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" <service-url>/health
+# {"status":"healthy","version":"1.0.0"}
+```
+
 ---
 
 ## Repository layout

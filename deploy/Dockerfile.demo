@@ -1,0 +1,61 @@
+# syntax=docker/dockerfile:1
+#
+# FinFlow DEMO image — same lean build as the production Dockerfile, but BAKES a
+# small stratified sample dataset (data.parquet) + the fine-tuned models so the
+# public demo returns REAL data (fraud, stats, agent enrichment) instead of empty
+# endpoints. Intended for a personal-Gmail Cloud Run project where public
+# (allUsers) access is permitted.
+#
+# This Dockerfile is built from an assembled context produced by
+# scripts/prepare_demo.py (which places src/, requirements-api.txt, the sample
+# data/, and this file into deploy/demo_build/). Do not build it from the repo
+# root — the sample assets live only in the assembled context.
+
+############################
+# Stage 1 — builder
+############################
+FROM python:3.11-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+COPY requirements-api.txt .
+RUN pip install --upgrade pip && \
+    pip install --index-url https://download.pytorch.org/whl/cpu torch==2.2.1 && \
+    pip install -r requirements-api.txt
+
+############################
+# Stage 2 — runtime
+############################
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    PORT=8080
+
+COPY --from=builder /opt/venv /opt/venv
+
+WORKDIR /app
+
+COPY src/ ./src/
+
+# Baked demo assets (the difference from the production image):
+#   data/processed/transactions/data.parquet  — ~50k stratified sample rows
+#   data/models/finbert-transaction/          — fine-tuned FinBERT (418 MB)
+#   data/models/fraud_classifier.pkl          — trained RandomForest
+COPY data/ ./data/
+
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8080
+
+CMD ["sh", "-c", "uvicorn src.api.main:app --host 0.0.0.0 --port ${PORT}"]
