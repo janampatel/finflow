@@ -17,24 +17,26 @@ metrics/reports/
 *.log
 
 
-# Python
+# Python — directory patterns are anchored to the repo root (leading slash) so
+# they only match Python build artifacts here, NOT same-named folders nested in
+# the frontend (e.g. frontend/src/lib must stay tracked).
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+/.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
 *.egg-info/
 .installed.cfg
 *.egg
