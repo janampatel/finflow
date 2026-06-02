@@ -4,8 +4,7 @@ FinFlow ingests raw bank-transaction data at scale, **enriches** it (category, m
 cash-flow, fraud), and **explains** it through a LangGraph multi-agent workflow where the
 LLM only *plans and narrates* — it never computes a number. Every financial value comes
 from a deterministic Python tool, and a hallucination guard + deterministic fallback
-**guarantee** that no ungrounded number is ever served. The design mirrors how regulated
-fintechs (e.g. Yodlee's Transaction Data Enrichment) use LLMs without trusting them with math.
+**guarantee** that no ungrounded number is ever served. 
 
 > **Why this exists:** to demonstrate end-to-end competence across **PySpark big-data
 > processing**, **analytical databases**, **agentic AI with deterministic, hallucination-free
@@ -47,31 +46,55 @@ Full machine-readable report: `metrics/reports/final_report.json`.
 ## Architecture
 
 ```
-                         ┌────────────────────────── INGESTION (batch + stream-ready) ──────────────────────────┐
-   Kafka / Kinesis  ─▶   Spark Structured Streaming (micro-batch)  ─▶  schema enforce + feature engineering
-   or PaySim CSV    ─▶   Spark batch (6.3M rows)                    ─▶  Parquet feature store (partitioned)
-                         └───────────────────────────────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                         ┌──────────────────────── SERVING (stateless, N replicas) ─────────────────────────┐
-                         │  FastAPI  ──  DuckDB (read-only analytics over Parquet)  ──  cached aggregates    │
-                         │     │                                                                              │
-                         │     ▼   POST /api/analyze                                                          │
-                         │  LangGraph agent:  planner ─(routes)→ tools ─→ insight ─→ synthesis ─→ validation │
-                         │                         │                                                          │
-                         │   Deterministic tools (pure Python, ms-latency, no LLM):                          │
-                         │     • enrichment  (FinBERT category)      • fraud      (RandomForest, supervised)  │
-                         │     • merchant    (RapidFuzz resolution)  • anomaly    (IsolationForest, novelty)  │
-                         │     • cashflow    (signed income/expense) • insight    (composite health score)    │
-                         │                                                                                    │
-                         │   LLM (Groq llama-3.1-8b): plans tool routing + narrates — never computes numbers  │
-                         │   Hallucination guard: numeric grounding ≥ 0.85, else deterministic fallback       │
-                         └────────────────────────────────────────────────────────────────────────────────────┘
-                                                          │
-                                                          ▼
-                            Next.js (stateless, CDN-cacheable) — virtualized tables, agent-trace viewer
+  ┌──────────────────────────── INGESTION (batch + stream-ready) ────────────────────────────┐
+  │  Kafka / Kinesis  ─▶  Spark Structured Streaming (micro-batch)                           │
+  │  PaySim CSV       ─▶  Spark batch (6.36M rows, schema-enforced, 0.0003% failure rate)    │
+  │                        └─▶  feature engineering  ─▶  Parquet feature store (partitioned) │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+  ┌─────────────────────────── SERVING (stateless · N replicas) ────────────────────────────┐
+  │                                                                                          │
+  │   FastAPI  ──  DuckDB analytics over Parquet  ──  corpus aggregates cached at startup   │
+  │      │                                                                                   │
+  │      └─▶  POST /api/analyze  ─▶  LangGraph agent                                        │
+  │                                  planner ─(JSON routing)─▶ tools ─▶ insight             │
+  │                                                              │      ─▶ synthesis         │
+  │                                  Spine (always on):         │      ─▶ validation        │
+  │                                    • enrichment  (FinBERT, fine-tuned, 99.4% acc)       │
+  │                                    • fraud       (RandomForest · recall 0.988 / AUC 0.996)│
+  │                                  Optional (planner-routed):                              │
+  │                                    • anomaly     (IsolationForest · novelty detection)   │
+  │                                    • merchant    (RapidFuzz · name normalisation)        │
+  │                                    • cashflow    (signed income / expense summary)       │
+  │                                                                                          │
+  │   LLM (Groq llama-3.1-8b · temp 0): routes tools + narrates — never computes numbers    │
+  │   Hallucination guard: numeric grounding ≥ 0.85 · else → deterministic fallback          │
+  │   Served hallucination rate: 0%  (raw LLM ~38% → repaired before serving)               │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+  ┌─────────────────────────────── FRONTEND ────────────────────────────────────────────────┐
+  │  Next.js 14 · TanStack Query/Table/Virtual · Recharts · Tailwind                        │
+  │  Stateless · CDN-cacheable · virtualized tables (same DOM cost at 50 or 5 000 000 rows) │
+  │  Deployed on Vercel (public) ◀──── NEXT_PUBLIC_API_URL ────▶ Cloud Run API              │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
+                                            │
+                                            ▼
+  ┌─────────────────────────── CI / CD + CLOUD DEPLOY ─────────────────────────────────────┐
+  │                                                                                          │
+  │   GitHub push                                                                            │
+  │      └─▶  GitHub Actions CI                                                             │
+  │              ├─ ruff lint                                                                │
+  │              ├─ import smoke  (boots without data — proves lazy-loaded models)           │
+  │              └─ docker build + /health container smoke test  (layer-cached)             │
+  │                                                                                          │
+  │   on-demand deploy  ─▶  Cloud Build compiles Dockerfile  ─▶  Artifact Registry          │
+  │                                └─▶  Cloud Run  (scale-to-zero · 2 vCPU · 2 GB)         │
+  │                                       multi-stage image: CPU-torch · non-root · ~1.5 GB │
+  │                                       state externalized (Parquet + models not in image) │
+  └──────────────────────────────────────────────────────────────────────────────────────────┘
 ```
-
 ---
 
 ## How each target skill is demonstrated
@@ -216,7 +239,7 @@ PLAN.md              # full phase-by-phase design + status
 
 ## Design decisions worth calling out
 
-1. **LLM plans and narrates; tools compute.** The only defensible way to use an LLM on money.
+1. **LLM plans and narrates; tools compute.** The only defensible way to use an LLM on financial data.
 2. **Grounding guard + deterministic fallback** make hallucination a *handled* failure mode, not a
    risk — the system never serves an ungrounded number.
 3. **Supervised fraud where labels exist, unsupervised novelty where they don't** — and the eval
